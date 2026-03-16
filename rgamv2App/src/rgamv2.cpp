@@ -286,6 +286,7 @@ private:
 
     void handleMassReading(float mass, double reading);
 
+    void processInfo(const std::string & notification);
     void processFilamentStatus(const std::string & notification);
     void processFilamentInfo(const std::string & notification);
 
@@ -313,7 +314,9 @@ private:
 
     const static int numFilaments_ = 2;
     const static int numDetectorIndexes_ = 4;
-    const static unsigned numAnalogInputs_ = 5;
+
+    unsigned numAnalogInputs_ = 0;
+    unsigned numAnalogOutputs_ = 0;
 
     const static unsigned accuracy_ = 5;
     const static unsigned pointsPerPeak_ = 32;
@@ -511,7 +514,6 @@ MV2::MV2(char * name, char *address)
     createParam("MODE", asynParamInt32, &P_MODE);
     createParam("SETMODE", asynParamInt32, &P_SETMODE);
 
-    analogInput_.init(numAnalogInputs_);
     scanData_.resize(lastIndex(ANALOG_200)+1);
     barResultsData_.resize(NUM_MASSES);
 
@@ -692,6 +694,11 @@ void MV2::stateMachine()
                 }
                 fil_.setValue(filamentStatus_.filamentNum_);
                 detector_.setValue(0);
+
+                if (numAnalogInputs_ > 0)
+                {
+                    analogInput_.init(numAnalogInputs_);
+                }
                 changeState(SELECTED);
             }
             break;
@@ -988,8 +995,11 @@ void MV2::controlSensor()
     cmds.push_back("SourceInfo 0");     // These 2 commands seem to be necessary
     cmds.push_back("DetectorInfo 0");   // to workaround VRGA crashing
     cmds.push_back("MultiplierInfo");
-    cmds.push_back("AnalogInputInterval 0 500000");
-    cmds.push_back("AnalogInputEnable 0 true");
+    for (size_t i = 0; i < numAnalogInputs_; i++)
+    {
+        cmds.push_back("AnalogInputInterval " + std::to_string(i) + " 500000");
+        cmds.push_back("AnalogInputEnable " + std::to_string(i) + " true");
+    }
     cmds.push_back("MeasurementRemoveAll");
 }
 
@@ -1311,6 +1321,11 @@ void MV2::processReceived()
                     std::string notification(buffer);
                     processFilamentInfo(notification);
                 }
+                else if (event == "Info")
+                {
+                    std::string notification(buffer);
+                    processInfo(notification);
+                }
             }
             else
             {
@@ -1342,6 +1357,63 @@ void MV2::handleMassReading(float mass, double reading)
     if (index == lastIndex(headState_.status()))
     {
         scanComplete();
+    }
+}
+
+void MV2::processInfo(const std::string &notification)
+{
+    unsigned numAnalogInputs = 0;
+    unsigned numAnalogOutputs = 0;
+
+    int numScanned = sscanf(notification.c_str(),
+        "Info  OK\n"
+        "  SerialNumber %*s%*[^\n]\n"
+        "  Name %*s%*[^\n]\n"
+        "  State %*s%*[^\n]\n"
+        "  UserApplication %*s%*[^\n]\n"
+        "  UserVersion %*s%*[^\n]\n"
+        "  UserAddress %*s%*[^\n]\n"
+        "  ProductID %*s%*[^\n]\n"
+        "  RFConfiguration %*s%*[^\n]\n"
+        "  DetectorType %*s%*[^\n]\n"
+        "  SEMSupply %*s%*[^\n]\n"
+        "  ExternalHardware %*s%*[^\n]\n"
+        "  TotalPressureGauge %*s%*[^\n]\n"
+        "  FilamentType %*s%*[^\n]\n"
+        "  ControlUnitUse %*s%*[^\n]\n"
+        "  SensorType %*s%*[^\n]\n"
+        "  InletType %*s%*[^\n]\n"
+        "  Version %*s%*[^\n]\n"
+        "  NumEGains %*s%*[^\n]\n"
+        "  NumDigitalPorts %*s%*[^\n]\n"
+        "  NumAnalogInputs %u%*[^\n]\n"
+        "  NumAnalogOutputs %u%*[^\n]\n"
+        "  NumSourceSettings %*s%*[^\n]\n"
+        "  NumInlets %*s%*[^\n]\n"
+        "  MaxMass %*s%*[^\n]\n"
+        "  ActiveFilament %*s%*[^\n]\n"
+        "  FullScaleADCAmps %*s%*[^\n]\n"
+        "  FullScaleADCCount %*s%*[^\n]\n"
+        "  PeakResolution %*s%*[^\n]\n"
+        "  ConfigurableIonSource %*s%*[^\n]\n"
+        "  RolloverCompensation %*s%*[^\n]\n"
+        "  InterpolatedTuning %*s%*[^\n]\n"
+        "\n",
+        &numAnalogInputs, &numAnalogOutputs);
+
+    const int NUM_SCANNED_EXPECTED = 2;
+    if (numScanned == NUM_SCANNED_EXPECTED)
+    {
+        numAnalogInputs_ = numAnalogInputs;
+        numAnalogOutputs_ = numAnalogOutputs;
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+            "(%s) NumAnalogInputs: %d NumAnalogOutputs: %d\n",
+             portName, numAnalogInputs_, numAnalogOutputs_);
+    }
+    else
+    {
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+            "Info invalid:\n%s\n", escapedFromRaw(notification).c_str());
     }
 }
 
